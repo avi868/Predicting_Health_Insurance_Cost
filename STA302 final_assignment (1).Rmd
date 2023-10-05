@@ -1,0 +1,239 @@
+---
+title: "STA302 Final Assignment"
+name: Avinash Dindial
+student_number: 1006020949
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Firstly, we load the data set into R. I will be working with insurance.csv.Then, I will build a model of all the predictors.
+
+
+```{r}
+library(readr)
+library("ggplot2")
+insurance <- read_csv("insurance.csv")
+View(insurance)
+
+```
+
+## Exploratory analysis
+This section shows some of the basic data needed for the final project. The first regression model using all predictors is also shown as well as a couple  preliminary scatter plots.
+
+
+```{r, echo=FALSE}
+#install.packages("cars)
+library(car)
+set.seed(994)
+#install.packages("GGally")
+insurance <- read.csv(file="insurance.csv", header = T)
+train <- insurance[sample(1:nrow(insurance), 669, replace = F),]
+test <- insurance[which(!(insurance$charges %in% train$charges)),]
+##Used charges since they are unique
+
+mean_age <- mean(train$age)
+num_men <- sum(train$sex == "male")
+num_female <- sum(train$sex == "female")
+num_smokers <- sum(train$smoker == "yes") ##Number of smokers
+
+mean_train <- mean(train$charges) 
+mean_test <- mean(test$charges)## Means close in value
+
+sd_charge_train <-sd(train$charges)
+sd_charge_test <- sd(test$charges) ## SD close in value
+
+train%>%ggplot(aes(x = age, y = charges)) + geom_point()
+##General trend is that as age increases, so do charges
+##Slightly curved
+
+boxplot(train$charges ~ train$sex, main="charges vs sex", xlab= "sex", ylab="charges")
+## No noticeable difference in charges for both sexes.
+
+boxplot(train$charges ~ train$children, main = "0", xlab = "children", ylab = "charges")
+## No drastic change in charges depending on the number of children a person has
+
+train%>%ggplot(aes(x = bmi, y =charges, color = sex)) + geom_point()
+## As BMI increases, so do charges
+
+train%>%ggplot(aes(x = charges, y = smoker, color = smoker)) + geom_point()
+## Smokers pay more than non-smokers
+
+train %>% select(age, bmi, children, smoker, region, charges) %>%GGally::ggpairs(mapping = aes(color = region))
+##NOTE: I used GGally because the pairs function would not work since I have a lot of categorical variables and it would be too tedious to plot them individually.  
+### 
+##Charges is not distributed normally. 
+full_model <- lm(charges ~ age + bmi + children + sex + smoker + region, data = train)
+summary(full_model)## full model
+##Adj. R^2 = 76.4
+plot(full_model)
+## Normality  violated
+vif(full_model)
+## No multicollinearity
+
+
+
+########Selecting reduced model################
+##We want interpretable model so less predictors is better
+##Getting the significant predictors
+##Using R^2 and adj. R^2
+##Select subsets of full model
+
+##Started without sex as it is insignificant
+model1 <- lm(charges ~ age + bmi + children + smoker + region, data = train) 
+model2 <- lm(charges ~ age + bmi + smoker + children, data = train)##Largest adj R^2 with lowest # of predictors
+model3 <- lm(charges ~ age + bmi + smoker, data = train)
+cbind(summary(full_model)$adj.r.squared, summary(model1)$adj.r.squared, summary(model2)$adj.r.squared, summary(model3)$adj.r.squared)
+
+###All has roughly same adj R^2 so we go for simplest model = model3
+
+
+
+##Picking more potential models-
+##Using Selection since we have no multicollinearity
+
+best <- regsubsets(charges~., data=train, nbest = 1)
+summary(best)
+## Using best 4 predictor model:
+new_selection_model <- lm(charges~ age + bmi + children + smoker, data = train)
+#No multicollinearity still
+
+
+##############Picking another model##############
+
+#I will include interactions between variables in this model. Since we see a trend in smoker and bmi, i want to see the significance of obese smokers on health charges. This creates a binary variable so it can properly interact with smoking which is also a binary variable.
+train$obese <- as.factor(ifelse(train$bmi >=30,"yes","no"))
+
+##Using our atuomated selection from above as a base for this model
+newmodel2 <-lm(charges ~ age + obese:smoker + smoker +  children, data=train)
+## Higher adj. R^2
+## I chose children in this model to replace smoking since I use smoking as an interaction variable.
+newmodel3 <-lm(charges ~ age + obese:smoker + smoker + children + region, data=train)
+##Similar adj. R^2 but more variables, so we prefer newmodel2 over newmodel3. Same result if we introduce sex using a forward selection technique.
+
+
+## I also use the as.factor function to further analyze how the number of children affects charges. This shows there is a slight increase in charges the more children a person has.
+
+newmodel2 <- lm(charges ~ age + obese:smoker +smoker + as.factor(children), data=train)
+# smoking affects cost whether bmi is high or not. Similar to age, smoking affects the cost.
+## Higher adj R^2
+## 2nd potential model.
+
+
+
+#Model Diagnostics
+#full model
+#plot of residual vs fitted showed clumping. I will apply BoxCox to try to fix this 
+p <- powerTransform(cbind(train[,1], train[,3])~1)
+summary(p)
+## For the response, I will try a log transformation
+train$new_charges <- log(train$charges)
+full_model_fixed <- lm(new_charges ~ age + bmi + children + sex + smoker + region, data = train)
+## Residual vs fitted got better, qq plot still shows deviations
+##Since age showed slight curving, I will transform this to try to fix the linearity issue.
+train$new_age <-(train$age)^0.5
+train$new_bmi <-(train$bmi)^0.5
+full_model_fixed <- lm(new_charges ~new_age + new_bmi + children + sex + smoker + region, data = train)
+##Normality fixed
+
+
+#new_selection_model
+#Same issues as before
+p1 <- powerTransform(train$age)
+p1 #
+p2 <- powerTransform(train$bmi)
+ps
+#boxCox(new_selection_model)#lamba = 1.5
+#train$new_charges1 <- (train$charges)^1.5
+#raising power of response variable to 1.5 did not work. I used the same transformation as before.
+new_selection_model <- lm(new_charges~new_age + new_bmi + children + smoker, data = train)
+##Clumping was resolved, normality still an issue
+## We gave up no multicollinearity in exchange for resolving violated model assumptions
+
+# newmodel2
+##Issues with normality
+#Transformed age since it was non-linear to begin with
+##Transformation used this to correct linearity assumption
+
+newmodel2 <- lm(charges ~ new_age+ obese:smoker + smoker +as.factor(children),data=train)
+#This model explains 86% of the variation
+vif(newmodel2)
+#no multicollinearity
+## 
+##QQ plot got better with transforming but still non-normal
+
+##Since all qq plots have a skewed right tail, I will check for influential points in the full model.
+
+#Cooks distance
+Dcutoff <- qf(0.5, 7, 661)
+D <- cooks.distance(full_model)
+which( D>Dcutoff)
+
+# DF FITS
+dffitscut <- 2*sqrt((7)/669)
+dfs <- dffits(full_model)
+w3 <- which(abs(dfs) > dffitscut)
+w3 # We have a lot of influential points according to this 
+
+#DF Beta
+dfbetacut <- 2/sqrt(669)
+dfb <- dfbetas(full_model)
+w4 <- which(abs(dfb[,1])>dfbetacut)
+w4
+w5 <- which(abs(dfb[,2])>dfbetacut)
+w5
+w6 <- which(abs(dfb[,3])>dfbetacut)
+w6
+w7 <-which(abs(dfb[,4])>dfbetacut)
+w7
+w8 <-which(abs(dfb[,5])>dfbetacut)
+w8
+w9 <-which(abs(dfb[,6])>dfbetacut)
+w9
+# Still shows a high number of influential points.
+
+
+
+##Using AIC, BIC to determine best models that has the same response variable.
+
+aic <- cbind(AIC(full_model_fixed), AIC(new_selection_model), AIC(full_model), AIC(newmodel2))
+bic <- cbind(BIC(full_model), BIC(new_selection_model), BIC(full_model), BIC(newmodel2))
+r_sq <- cbind(summary(full_model)$adj.r.squared, summary(new_selection_model)$adj.r.squared, summary(newmodel2)$adj.r.squared)
+aic
+bic
+r_sq
+anova(newmodel2, full_model)
+##new_selection_model has smallest aic, bic but similar R^2
+
+##newmodel2 has significantly higher adjusted r squared than new selection model, so i chose this one. 
+## I choose the model with interactions.
+
+
+##Validating the model
+test$new_age <- (test$age)^0.5
+test$obese <-as.factor(ifelse(test$bmi >=30,"yes","no"))
+testmodel <- lm(charges ~ new_age + obese:smoker + smoker + as.factor(children), data = test)
+summary(newmodel2)
+summary(testmodel)
+##Summaries seem to be similar
+
+vif(newmodel2)
+vif(testmodel)
+##No collinearity in either model
+qqnorm(rstandard(newmodel2))
+qqnorm(rstandard(testmodel))
+##QQ plots look the same- similar deviation from straight line indicating normality errors may be due to the data and not the model.
+
+
+##Can safely conclude model is valid
+
+#Limitations
+#unclear how smoking is defined. There are varying degrees to how much people smoke and this model does not tell us the specifics rather it generalizes too broadly. So, whether you smoke a pack a day or a pack a month, according to this model, both persons would be similar. However, since this model is based more on interpretability, I still think this model is appropriate.
+
+#I would prefer to use newmodel2 as the model to use for this project but the AIc and BIC  scores were similar to that of the full model. This model explained 86% of the variation and it was validated by the test data. In addition, the residual plot is also randomly scattered but the QQ plot is still somewhat deviated.
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
